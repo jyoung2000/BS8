@@ -979,7 +979,8 @@ class Box_Document_Viewer {
                         padding: 11px 20px;
                     }
 
-                    .btn-ai {
+                    /* Chat with AI button takes full width on tablets */
+                    #box-ai-chat-button {
                         flex: 0 0 100%;
                         order: -1;
                     }
@@ -1468,7 +1469,7 @@ class Box_Document_Viewer {
                     </div>
                 </div>
                 <div class="document-actions">
-                    <button id="box-ai-chat-button" class="btn btn-ai" data-file-id="<?php echo esc_attr($file_info['id']); ?>">
+                    <button id="box-ai-chat-button" class="btn btn-primary" data-file-id="<?php echo esc_attr($file_info['id']); ?>">
                         <span class="dashicons dashicons-format-chat"></span>
                         <span>Chat with AI</span>
                     </button>
