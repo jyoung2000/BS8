@@ -63,27 +63,51 @@ class Box_Document_Viewer {
             return;
         }
 
+        // Initialize default values
+        $file_info = array(
+            'id' => $file_id,
+            'name' => 'Document',
+            'size' => 0,
+            'modified_at' => current_time('mysql')
+        );
+        $embed_url = null;
+        $error_message = null;
+
         // Check authentication
         $auth_status = Box_Auth::get_auth_status();
         if (!$auth_status['authenticated'] || $auth_status['expired']) {
-            wp_die(__('Not authenticated with Box. Please contact the site administrator.', 'box-api-integration'));
+            $error_message = __('Not authenticated with Box. Please contact the site administrator to reconnect.', 'box-api-integration');
+            // Continue to render page with error message
+        } else {
+            // Get file info from Box
+            try {
+                $credentials = Box_API_Integration::get_instance()->get_credentials();
+                $client = new Box_API_Client($credentials);
+
+                $api_file_info = $client->get_file_info($file_id);
+
+                if (is_wp_error($api_file_info)) {
+                    $error_message = __('Unable to load file information. ', 'box-api-integration') . $api_file_info->get_error_message();
+                    error_log('Box Document Viewer - File info error: ' . $api_file_info->get_error_message());
+                } else {
+                    // Successfully got file info
+                    $file_info = $api_file_info;
+
+                    // Try to get embed/preview URL
+                    $embed_url = self::get_embed_url($file_id);
+
+                    if (!$embed_url) {
+                        error_log('Box Document Viewer - Unable to get embed URL for file: ' . $file_id);
+                    }
+                }
+            } catch (Exception $e) {
+                $error_message = __('An error occurred while loading the document. ', 'box-api-integration') . $e->getMessage();
+                error_log('Box Document Viewer - Exception: ' . $e->getMessage());
+            }
         }
 
-        // Get file info from Box
-        $credentials = Box_API_Integration::get_instance()->get_credentials();
-        $client = new Box_API_Client($credentials);
-
-        $file_info = $client->get_file_info($file_id);
-
-        if (is_wp_error($file_info)) {
-            wp_die(__('File not found or access denied.', 'box-api-integration'));
-        }
-
-        // Get embed/preview URL
-        $embed_url = self::get_embed_url($file_id);
-
-        // Display the document
-        self::render_document_page($file_info, $embed_url);
+        // Always display the document page (even with errors)
+        self::render_document_page($file_info, $embed_url, $error_message);
         exit;
     }
 
@@ -91,24 +115,29 @@ class Box_Document_Viewer {
      * Get embed URL for a document
      */
     public static function get_embed_url($file_id) {
-        $credentials = Box_API_Integration::get_instance()->get_credentials();
-        $client = new Box_API_Client($credentials);
+        try {
+            $credentials = Box_API_Integration::get_instance()->get_credentials();
+            $client = new Box_API_Client($credentials);
 
-        // Get embed link from Box
-        $response = $client->request("files/{$file_id}?fields=expiring_embed_link", 'GET');
+            // Get embed link from Box
+            $response = $client->request("files/{$file_id}?fields=expiring_embed_link", 'GET');
 
-        if (is_wp_error($response)) {
-            return null;
-        }
+            if (is_wp_error($response)) {
+                error_log('Box Document Viewer - Embed link request error: ' . $response->get_error_message());
+                // Try fallback
+            } elseif (isset($response['expiring_embed_link']['url'])) {
+                return $response['expiring_embed_link']['url'];
+            }
 
-        if (isset($response['expiring_embed_link']['url'])) {
-            return $response['expiring_embed_link']['url'];
-        }
-
-        // Fallback to shared link
-        $shared_link = $client->create_shared_link($file_id);
-        if (!is_wp_error($shared_link) && isset($shared_link['shared_link']['url'])) {
-            return $shared_link['shared_link']['url'];
+            // Fallback to shared link
+            $shared_link = $client->create_shared_link($file_id);
+            if (!is_wp_error($shared_link) && isset($shared_link['shared_link']['url'])) {
+                return $shared_link['shared_link']['url'];
+            } elseif (is_wp_error($shared_link)) {
+                error_log('Box Document Viewer - Shared link error: ' . $shared_link->get_error_message());
+            }
+        } catch (Exception $e) {
+            error_log('Box Document Viewer - Embed URL exception: ' . $e->getMessage());
         }
 
         return null;
@@ -117,7 +146,7 @@ class Box_Document_Viewer {
     /**
      * Render document viewing page
      */
-    private static function render_document_page($file_info, $embed_url) {
+    private static function render_document_page($file_info, $embed_url, $error_message = null) {
         $file_name = isset($file_info['name']) ? $file_info['name'] : 'Document';
         $file_size = isset($file_info['size']) ? size_format($file_info['size'], 2) : '';
         $modified_at = isset($file_info['modified_at']) ? date('F j, Y g:i a', strtotime($file_info['modified_at'])) : '';
@@ -125,25 +154,31 @@ class Box_Document_Viewer {
         // Get download URL - always generate a working download URL
         $download_url = '';
         if (isset($file_info['id'])) {
-            $credentials = Box_API_Integration::get_instance()->get_credentials();
-            $client = new Box_API_Client($credentials);
+            try {
+                $credentials = Box_API_Integration::get_instance()->get_credentials();
+                $client = new Box_API_Client($credentials);
 
-            // Try to get shared link first (best for direct downloads)
-            $shared_link = $client->create_shared_link($file_info['id']);
+                // Try to get shared link first (best for direct downloads)
+                $shared_link = $client->create_shared_link($file_info['id']);
 
-            if (!is_wp_error($shared_link) && isset($shared_link['shared_link']['download_url'])) {
-                // Use shared link download URL
-                $download_url = $shared_link['shared_link']['download_url'];
-            } elseif (!is_wp_error($shared_link) && isset($shared_link['shared_link']['url'])) {
-                // Use shared link URL with download parameter
-                $download_url = $shared_link['shared_link']['url'] . '?dl=1';
-            } else {
-                // Fallback: use WordPress proxy endpoint for authenticated download
+                if (!is_wp_error($shared_link) && isset($shared_link['shared_link']['download_url'])) {
+                    // Use shared link download URL
+                    $download_url = $shared_link['shared_link']['download_url'];
+                } elseif (!is_wp_error($shared_link) && isset($shared_link['shared_link']['url'])) {
+                    // Use shared link URL with download parameter
+                    $download_url = $shared_link['shared_link']['url'] . '?dl=1';
+                } else {
+                    // Fallback: use WordPress proxy endpoint for authenticated download
+                    $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
+                }
+
+                // Debug logging
+                error_log('Download URL for file ' . $file_info['id'] . ': ' . ($download_url ? 'Generated: ' . $download_url : 'Failed'));
+            } catch (Exception $e) {
+                error_log('Download URL generation error: ' . $e->getMessage());
+                // Fallback to proxy endpoint
                 $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
             }
-
-            // Debug logging
-            error_log('Download URL for file ' . $file_info['id'] . ': ' . ($download_url ? 'Generated: ' . $download_url : 'Failed'));
         }
 
         // Always ensure download URL is set
@@ -1490,12 +1525,27 @@ class Box_Document_Viewer {
             </div>
 
             <div class="document-viewer-container">
-                <?php if ($embed_url) : ?>
+                <?php if ($error_message) : ?>
+                    <div class="document-viewer-error">
+                        <span class="dashicons dashicons-warning" style="font-size: 48px; width: 48px; height: 48px; color: #d63638;"></span>
+                        <p style="margin-top: 20px; font-size: 18px; font-weight: 600;"><?php echo esc_html($error_message); ?></p>
+                        <p style="color: #86868b;">You can still download the file using the button above.</p>
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download style="margin-top: 20px;">
+                            <span class="dashicons dashicons-download"></span>
+                            Download File
+                        </a>
+                    </div>
+                <?php elseif ($embed_url) : ?>
                     <iframe src="<?php echo esc_url($embed_url); ?>" allowfullscreen></iframe>
                 <?php else : ?>
                     <div class="document-viewer-error">
-                        <p>Unable to preview this document.</p>
-                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download>Download File</a>
+                        <span class="dashicons dashicons-info" style="font-size: 48px; width: 48px; height: 48px; color: #2271b1;"></span>
+                        <p style="margin-top: 20px;">Unable to preview this document.</p>
+                        <p style="color: #86868b;">The preview may not be available for this file type.</p>
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download style="margin-top: 20px;">
+                            <span class="dashicons dashicons-download"></span>
+                            Download File
+                        </a>
                     </div>
                 <?php endif; ?>
             </div>
