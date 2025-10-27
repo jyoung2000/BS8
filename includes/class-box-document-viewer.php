@@ -18,6 +18,13 @@ class Box_Document_Viewer {
         add_filter('query_vars', array(__CLASS__, 'add_query_vars'));
         add_action('template_redirect', array(__CLASS__, 'handle_document_view'));
 
+        // Prevent 404 errors on box-document pages
+        add_filter('pre_handle_404', array(__CLASS__, 'prevent_404'), 10, 2);
+        add_action('parse_request', array(__CLASS__, 'parse_box_document_request'));
+        add_filter('body_class', array(__CLASS__, 'remove_404_body_class'));
+        add_filter('wp_title', array(__CLASS__, 'set_document_title'), 10, 2);
+        add_filter('document_title_parts', array(__CLASS__, 'set_document_title_parts'));
+
         // AJAX handler for getting document info
         add_action('wp_ajax_box_get_document_url', array(__CLASS__, 'ajax_get_document_url'));
         add_action('wp_ajax_nopriv_box_get_document_url', array(__CLASS__, 'ajax_get_document_url'));
@@ -54,6 +61,64 @@ class Box_Document_Viewer {
     }
 
     /**
+     * Parse box document requests and mark them as valid
+     */
+    public static function parse_box_document_request($wp) {
+        // Check if this is a box-document request
+        if (isset($wp->query_vars['box_document_id']) && !empty($wp->query_vars['box_document_id'])) {
+            // Mark this as a valid request (not a 404)
+            $wp->query_vars['error'] = '';
+            status_header(200);
+        }
+    }
+
+    /**
+     * Prevent 404 status for box-document pages
+     */
+    public static function prevent_404($preempt, $wp_query) {
+        // If this is a box-document page, don't trigger 404
+        if (get_query_var('box_document_id')) {
+            return true; // Prevent 404
+        }
+        return $preempt;
+    }
+
+    /**
+     * Remove 404 class from body on box-document pages
+     */
+    public static function remove_404_body_class($classes) {
+        if (get_query_var('box_document_id')) {
+            // Remove error404 class if present
+            $classes = array_diff($classes, array('error404'));
+            // Add custom class for box-document pages
+            $classes[] = 'box-document-page';
+        }
+        return $classes;
+    }
+
+    /**
+     * Set document title for box-document pages
+     */
+    public static function set_document_title($title, $sep = '|') {
+        $file_id = get_query_var('box_document_id');
+        if ($file_id) {
+            return 'Document ' . $sep . ' ' . get_bloginfo('name');
+        }
+        return $title;
+    }
+
+    /**
+     * Set document title parts for box-document pages
+     */
+    public static function set_document_title_parts($title_parts) {
+        $file_id = get_query_var('box_document_id');
+        if ($file_id) {
+            $title_parts['title'] = 'Document';
+        }
+        return $title_parts;
+    }
+
+    /**
      * Handle document view requests
      */
     public static function handle_document_view() {
@@ -62,6 +127,11 @@ class Box_Document_Viewer {
         if (!$file_id) {
             return;
         }
+
+        // Ensure this is not treated as a 404
+        global $wp_query;
+        $wp_query->is_404 = false;
+        status_header(200);
 
         // Initialize default values
         $file_info = array(
