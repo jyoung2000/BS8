@@ -152,7 +152,8 @@ class Box_Document_Viewer {
             $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
         }
 
-        // Get custom colors from settings (Box blue: #0061D5)
+        // Get custom colors and settings (Box blue: #0061D5)
+        $chat_ai_enabled = get_option('box_chat_ai_enabled', true);
         $ai_button_color = get_option('box_chat_ai_button_color', '#0061D5');
         $header_color = get_option('box_chat_header_color', '#0061D5');
         $submit_color = get_option('box_chat_submit_color', '#0061D5');
@@ -1469,10 +1470,12 @@ class Box_Document_Viewer {
                     </div>
                 </div>
                 <div class="document-actions">
-                    <button id="box-ai-chat-button" class="btn btn-primary" data-file-id="<?php echo esc_attr($file_info['id']); ?>">
-                        <span class="dashicons dashicons-format-chat"></span>
-                        <span>Chat with AI</span>
-                    </button>
+                    <?php if ($chat_ai_enabled) : ?>
+                        <button id="box-ai-chat-button" class="btn btn-primary" data-file-id="<?php echo esc_attr($file_info['id']); ?>">
+                            <span class="dashicons dashicons-format-chat"></span>
+                            <span>Chat with AI</span>
+                        </button>
+                    <?php endif; ?>
                     <div class="document-actions-right">
                         <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary btn-download" download title="Download file">
                             <span class="dashicons dashicons-download"></span>
@@ -1498,6 +1501,7 @@ class Box_Document_Viewer {
             </div>
 
             <!-- Box AI Chat Modal -->
+            <?php if ($chat_ai_enabled) : ?>
             <div id="box-ai-chat-modal" class="box-ai-chat-modal" style="display: none;">
                 <div class="box-ai-chat-overlay"></div>
                 <div class="box-ai-chat-container">
@@ -1525,6 +1529,7 @@ class Box_Document_Viewer {
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
         </div>
 
         <script>

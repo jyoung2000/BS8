@@ -257,6 +257,11 @@ class Box_API_Integration {
         ));
 
         // Chat customization colors (Box blue: #0061D5)
+        register_setting('box_chat_customization', 'box_chat_ai_enabled', array(
+            'type' => 'boolean',
+            'default' => true
+        ));
+
         register_setting('box_chat_customization', 'box_chat_ai_button_color', array(
             'type' => 'string',
             'sanitize_callback' => 'sanitize_hex_color',

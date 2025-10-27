@@ -16,6 +16,7 @@ $refresh_interval = get_option('box_token_refresh_interval', 50);
 $keep_alive = get_option('box_keep_alive', false);
 
 // Get chat customization colors (Box blue: #0061D5)
+$chat_ai_enabled = get_option('box_chat_ai_enabled', true);
 $ai_button_color = get_option('box_chat_ai_button_color', '#0061D5');
 $header_color = get_option('box_chat_header_color', '#0061D5');
 $submit_color = get_option('box_chat_submit_color', '#0061D5');
@@ -41,7 +42,28 @@ if (isset($_GET['settings-updated'])) {
     </h1>
     
     <div class="box-admin-container">
-        
+
+        <!-- Box Plan Requirements -->
+        <div class="box-section">
+            <div class="notice notice-info inline">
+                <p>
+                    <strong><span class="dashicons dashicons-info"></span> <?php _e('Box Plan Requirements', 'box-api-integration'); ?></strong>
+                </p>
+                <p>
+                    <?php _e('This plugin works with all Box plans. However, certain features require specific plan levels:', 'box-api-integration'); ?>
+                </p>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li><strong><?php _e('Basic File Operations:', 'box-api-integration'); ?></strong> <?php _e('All Box plans (Individual, Business, Enterprise)', 'box-api-integration'); ?></li>
+                    <li><strong><?php _e('Box AI (Chat with AI):', 'box-api-integration'); ?></strong> <?php _e('Requires Box Enterprise Plus plan or higher with Box AI enabled', 'box-api-integration'); ?></li>
+                    <li><strong><?php _e('Advanced Features:', 'box-api-integration'); ?></strong> <?php _e('Some features may require Box Business or Enterprise plans', 'box-api-integration'); ?></li>
+                </ul>
+                <p style="margin-top: 10px;">
+                    <?php _e('For more information about Box plans and pricing, visit', 'box-api-integration'); ?>
+                    <a href="https://www.box.com/pricing" target="_blank"><?php _e('Box Pricing', 'box-api-integration'); ?></a>
+                </p>
+            </div>
+        </div>
+
         <!-- Connection Status -->
         <div class="box-section">
             <h2><?php _e('Connection Status', 'box-api-integration'); ?></h2>
@@ -235,14 +257,42 @@ if (isset($_GET['settings-updated'])) {
 
         <!-- Chat Customization -->
         <div class="box-section">
-            <h2><?php _e('Chat Customization', 'box-api-integration'); ?></h2>
+            <h2><?php _e('Box AI Chat Settings', 'box-api-integration'); ?></h2>
 
-            <p><?php _e('Customize the colors of your AI chat popup to match your brand.', 'box-api-integration'); ?></p>
+            <div class="notice notice-warning inline">
+                <p>
+                    <strong><span class="dashicons dashicons-warning"></span> <?php _e('Note:', 'box-api-integration'); ?></strong>
+                    <?php _e('Box AI requires a Box Enterprise Plus plan or higher. If you do not have this plan, you can disable the Chat with AI button below.', 'box-api-integration'); ?>
+                </p>
+            </div>
 
             <form method="post" action="options.php" id="box-chat-customization-form">
                 <?php settings_fields('box_chat_customization'); ?>
 
                 <table class="form-table" role="presentation">
+                    <tr>
+                        <th scope="row">
+                            <label for="box_chat_ai_enabled"><?php _e('Enable Chat with AI Button', 'box-api-integration'); ?></label>
+                        </th>
+                        <td>
+                            <label>
+                                <input type="checkbox"
+                                       id="box_chat_ai_enabled"
+                                       name="box_chat_ai_enabled"
+                                       value="1"
+                                       <?php checked($chat_ai_enabled, true); ?> />
+                                <?php _e('Show "Chat with AI" button on document viewer pages', 'box-api-integration'); ?>
+                            </label>
+                            <p class="description">
+                                <?php _e('Enable this to show the Chat with AI button on document pages. Requires Box Enterprise Plus plan with Box AI enabled.', 'box-api-integration'); ?>
+                            </p>
+                            <p class="description">
+                                <strong><?php _e('Disable this setting if:', 'box-api-integration'); ?></strong>
+                                <?php _e('You do not have Box AI enabled or you want to hide the chat functionality.', 'box-api-integration'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
                     <tr>
                         <th scope="row">
                             <label for="box_chat_ai_button_color"><?php _e('AI Chat Button Color', 'box-api-integration'); ?></label>
