@@ -97,7 +97,7 @@ jQuery(document).ready(function($) {
                 var icon = getFileIcon(file.extension);
                 var size = formatFileSize(file.size);
                 var date = formatDate(file.modified_at);
-                var documentUrl = boxSearch.siteUrl + '/box-document/' + file.id + '/';
+                var documentUrl = file.url || (boxSearch.siteUrl + '/box-document/' + file.id + '/');
 
                 $item.html(
                     '<div class="box-search-result-icon">' +

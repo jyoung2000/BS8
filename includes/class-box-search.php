@@ -235,7 +235,8 @@ class Box_Search {
                     'modified_at' => isset($file['modified_at']) ? $file['modified_at'] : '',
                     'type' => $file['type'],
                     'extension' => pathinfo($file['name'], PATHINFO_EXTENSION),
-                    'parent' => isset($file['parent']) ? $file['parent']['name'] : 'Unknown'
+                    'parent' => isset($file['parent']) ? $file['parent']['name'] : 'Unknown',
+                    'url' => Box_Document_Viewer::get_document_url($file['id']) // Use proper permalink
                 );
             }
         }
