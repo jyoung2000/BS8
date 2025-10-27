@@ -26,6 +26,10 @@ class Box_Document_Viewer {
         add_action('wp_ajax_box_ai_chat', array(__CLASS__, 'ajax_box_ai_chat'));
         add_action('wp_ajax_nopriv_box_ai_chat', array(__CLASS__, 'ajax_box_ai_chat'));
 
+        // AJAX handler for file downloads
+        add_action('wp_ajax_box_download_file', array(__CLASS__, 'ajax_download_file'));
+        add_action('wp_ajax_nopriv_box_download_file', array(__CLASS__, 'ajax_download_file'));
+
         // Enqueue chat scripts on document viewer pages
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_chat_scripts'));
     }
@@ -118,22 +122,34 @@ class Box_Document_Viewer {
         $file_size = isset($file_info['size']) ? size_format($file_info['size'], 2) : '';
         $modified_at = isset($file_info['modified_at']) ? date('F j, Y g:i a', strtotime($file_info['modified_at'])) : '';
 
-        // Get download URL - always show button if we have a file ID
+        // Get download URL - always generate a working download URL
         $download_url = '';
         if (isset($file_info['id'])) {
             $credentials = Box_API_Integration::get_instance()->get_credentials();
             $client = new Box_API_Client($credentials);
-            $download_response = $client->request("files/{$file_info['id']}/content", 'GET', array(), false);
 
-            if (!is_wp_error($download_response)) {
-                $download_url = $download_response;
+            // Try to get shared link first (best for direct downloads)
+            $shared_link = $client->create_shared_link($file_info['id']);
+
+            if (!is_wp_error($shared_link) && isset($shared_link['shared_link']['download_url'])) {
+                // Use shared link download URL
+                $download_url = $shared_link['shared_link']['download_url'];
+            } elseif (!is_wp_error($shared_link) && isset($shared_link['shared_link']['url'])) {
+                // Use shared link URL with download parameter
+                $download_url = $shared_link['shared_link']['url'] . '?dl=1';
             } else {
-                // Fallback: construct download URL using Box API
-                $download_url = "https://api.box.com/2.0/files/{$file_info['id']}/content";
+                // Fallback: use WordPress proxy endpoint for authenticated download
+                $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
             }
 
-            // Debug logging (will appear in browser console via wp_footer)
-            error_log('Download URL for file ' . $file_info['id'] . ': ' . ($download_url ? 'Generated' : 'Failed'));
+            // Debug logging
+            error_log('Download URL for file ' . $file_info['id'] . ': ' . ($download_url ? 'Generated: ' . $download_url : 'Failed'));
+        }
+
+        // Always ensure download URL is set
+        if (empty($download_url) && isset($file_info['id'])) {
+            // Ultimate fallback: WordPress proxy endpoint
+            $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
         }
 
         // Get custom colors from settings (Box blue: #0061D5)
@@ -1457,7 +1473,7 @@ class Box_Document_Viewer {
                         <span>Chat with AI</span>
                     </button>
                     <div class="document-actions-right">
-                        <a href="<?php echo $download_url ? esc_url($download_url) : '#'; ?>" class="btn btn-primary btn-download" download title="Download file" <?php echo !$download_url ? 'onclick="return false;" style="opacity: 0.6; cursor: not-allowed;"' : ''; ?>>
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary btn-download" download title="Download file">
                             <span class="dashicons dashicons-download"></span>
                             <span class="btn-text">Download</span>
                         </a>
@@ -1475,9 +1491,7 @@ class Box_Document_Viewer {
                 <?php else : ?>
                     <div class="document-viewer-error">
                         <p>Unable to preview this document.</p>
-                        <?php if ($download_url) : ?>
-                            <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download>Download File</a>
-                        <?php endif; ?>
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download>Download File</a>
                     </div>
                 <?php endif; ?>
             </div>
@@ -1673,5 +1687,80 @@ class Box_Document_Viewer {
             'answer' => $answer,
             'created_at' => isset($response['created_at']) ? $response['created_at'] : current_time('mysql')
         ));
+    }
+
+    /**
+     * AJAX handler for file downloads
+     * Proxies the download request with proper authentication
+     */
+    public static function ajax_download_file() {
+        // Verify nonce
+        $file_id = isset($_GET['file_id']) ? sanitize_text_field($_GET['file_id']) : '';
+        $nonce = isset($_GET['nonce']) ? sanitize_text_field($_GET['nonce']) : '';
+
+        if (empty($file_id)) {
+            wp_die('File ID is required');
+        }
+
+        if (empty($nonce) || !wp_verify_nonce($nonce, 'box_download_' . $file_id)) {
+            wp_die('Invalid security token');
+        }
+
+        // Check authentication
+        $auth_status = Box_Auth::get_auth_status();
+        if (!$auth_status['authenticated'] || $auth_status['expired']) {
+            wp_die('Not authenticated with Box');
+        }
+
+        // Get file info
+        $credentials = Box_API_Integration::get_instance()->get_credentials();
+        $client = new Box_API_Client($credentials);
+
+        $file_info = $client->get_file_info($file_id);
+
+        if (is_wp_error($file_info)) {
+            wp_die('File not found or access denied');
+        }
+
+        // Get the file content
+        $access_token = get_option('box_access_token');
+        $download_url = "https://api.box.com/2.0/files/{$file_id}/content";
+
+        // Stream the file
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $access_token
+            ),
+            'timeout' => 300, // 5 minutes for large files
+            'stream' => true,
+            'filename' => wp_tempnam()
+        );
+
+        $response = wp_remote_get($download_url, $args);
+
+        if (is_wp_error($response)) {
+            wp_die('Failed to download file: ' . $response->get_error_message());
+        }
+
+        // Get the temporary file path
+        $temp_file = $args['filename'];
+
+        // Set headers for download
+        $file_name = isset($file_info['name']) ? $file_info['name'] : 'download';
+        $file_size = isset($file_info['size']) ? $file_info['size'] : filesize($temp_file);
+
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . $file_name . '"');
+        header('Content-Length: ' . $file_size);
+        header('Cache-Control: no-cache');
+        header('Pragma: no-cache');
+
+        // Stream the file to the user
+        readfile($temp_file);
+
+        // Clean up
+        @unlink($temp_file);
+
+        exit;
     }
 }
