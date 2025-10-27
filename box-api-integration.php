@@ -687,6 +687,10 @@ class Box_API_Integration {
         Box_Document_Viewer::add_rewrite_rules();
         flush_rewrite_rules();
 
+        // Set rewrite version for automatic flushing
+        update_option('box_document_rewrite_version', '1.0');
+        update_option('box_document_needs_flush', false);
+
         // Clear cache
         wp_cache_flush();
     }

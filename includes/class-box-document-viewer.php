@@ -18,6 +18,15 @@ class Box_Document_Viewer {
         add_filter('query_vars', array(__CLASS__, 'add_query_vars'));
         add_action('template_redirect', array(__CLASS__, 'handle_document_view'));
 
+        // Check and flush rewrite rules if needed
+        add_action('init', array(__CLASS__, 'maybe_flush_rewrite_rules'));
+
+        // Add admin notice for rewrite rules
+        add_action('admin_notices', array(__CLASS__, 'admin_notice_flush_rewrite_rules'));
+
+        // Add AJAX handler for flushing rewrite rules
+        add_action('wp_ajax_box_flush_rewrite_rules', array(__CLASS__, 'ajax_flush_rewrite_rules'));
+
         // Prevent 404 errors on box-document pages
         add_filter('pre_handle_404', array(__CLASS__, 'prevent_404'), 10, 2);
         add_action('parse_request', array(__CLASS__, 'parse_box_document_request'));
@@ -58,6 +67,106 @@ class Box_Document_Viewer {
     public static function add_query_vars($vars) {
         $vars[] = 'box_document_id';
         return $vars;
+    }
+
+    /**
+     * Maybe flush rewrite rules if needed
+     */
+    public static function maybe_flush_rewrite_rules() {
+        $version_option = 'box_document_rewrite_version';
+        $current_version = '1.0';
+        $saved_version = get_option($version_option, '');
+
+        // If version doesn't match or doesn't exist, flush rules
+        if ($saved_version !== $current_version) {
+            flush_rewrite_rules();
+            update_option($version_option, $current_version);
+            update_option('box_document_needs_flush', false);
+            error_log('Box Document Viewer: Rewrite rules flushed automatically');
+        }
+    }
+
+    /**
+     * Admin notice for rewrite rules
+     */
+    public static function admin_notice_flush_rewrite_rules() {
+        // Only show to administrators
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        // Check if we need to show the notice
+        $needs_flush = get_option('box_document_needs_flush', false);
+
+        if ($needs_flush) {
+            ?>
+            <div class="notice notice-warning is-dismissible">
+                <p>
+                    <strong>Box API Integration:</strong>
+                    Box document links may not work properly.
+                    <a href="<?php echo admin_url('options-permalink.php'); ?>">Visit Permalinks Settings</a>
+                    to flush rewrite rules, or
+                    <button type="button" class="button button-small" id="box-flush-rewrite-rules-btn" style="vertical-align: baseline;">
+                        Click here to flush now
+                    </button>
+                </p>
+            </div>
+            <script type="text/javascript">
+            jQuery(document).ready(function($) {
+                $('#box-flush-rewrite-rules-btn').on('click', function(e) {
+                    e.preventDefault();
+                    var $btn = $(this);
+                    $btn.prop('disabled', true).text('Flushing...');
+
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'box_flush_rewrite_rules',
+                            nonce: '<?php echo wp_create_nonce('box_flush_rewrite_rules'); ?>'
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                $btn.closest('.notice').fadeOut(function() {
+                                    $(this).remove();
+                                });
+                                // Show success message
+                                $('<div class="notice notice-success is-dismissible"><p><strong>Success!</strong> Rewrite rules have been flushed. Box document links should now work properly.</p></div>')
+                                    .insertAfter('.wp-header-end')
+                                    .delay(5000)
+                                    .fadeOut();
+                            } else {
+                                alert('Error: ' + response.data);
+                                $btn.prop('disabled', false).text('Click here to flush now');
+                            }
+                        },
+                        error: function() {
+                            alert('Failed to flush rewrite rules. Please try visiting Settings > Permalinks instead.');
+                            $btn.prop('disabled', false).text('Click here to flush now');
+                        }
+                    });
+                });
+            });
+            </script>
+            <?php
+        }
+    }
+
+    /**
+     * AJAX handler for flushing rewrite rules
+     */
+    public static function ajax_flush_rewrite_rules() {
+        check_ajax_referer('box_flush_rewrite_rules', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+        }
+
+        flush_rewrite_rules();
+        update_option('box_document_needs_flush', false);
+        error_log('Box Document Viewer: Rewrite rules flushed via AJAX');
+
+        wp_send_json_success('Rewrite rules flushed successfully');
     }
 
     /**

@@ -129,6 +129,30 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // Flush permalinks
+    $('#flush-permalinks').on('click', function() {
+        var $button = $(this);
+        var originalText = $button.find('.dashicons').siblings().text();
+        $button.prop('disabled', true);
+        $button.find('.dashicons').siblings().text('Flushing...');
+
+        $.post(box_api.ajax_url, {
+            action: 'box_flush_rewrite_rules',
+            nonce: box_api.nonce
+        }, function(response) {
+            if (response.success) {
+                showNotice('Permalinks flushed successfully! Box document links should now work properly.', 'success');
+            } else {
+                showNotice('Failed to flush permalinks: ' + (response.data || 'Unknown error'), 'error');
+            }
+        }).fail(function() {
+            showNotice('Failed to flush permalinks. Please try visiting Settings > Permalinks instead.', 'error');
+        }).always(function() {
+            $button.prop('disabled', false);
+            $button.find('.dashicons').siblings().text(originalText);
+        });
+    });
+
     // Logout from Box
     $('#box-logout').on('click', function() {
         if (!confirm('Are you sure you want to logout from Box? You will need to re-authenticate to use Box features again.')) {

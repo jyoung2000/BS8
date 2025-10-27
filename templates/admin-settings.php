@@ -246,7 +246,15 @@ if (isset($_GET['settings-updated'])) {
                     <span class="dashicons dashicons-update"></span>
                     <?php _e('Refresh Token', 'box-api-integration'); ?>
                 </button>
+
+                <button type="button" class="button button-large" id="flush-permalinks">
+                    <span class="dashicons dashicons-admin-links"></span>
+                    <?php _e('Flush Permalinks', 'box-api-integration'); ?>
+                </button>
             </div>
+            <p class="description" style="margin-top: 10px;">
+                <?php _e('Click "Flush Permalinks" if box-document links are not working (returning 404 errors).', 'box-api-integration'); ?>
+            </p>
         </div>
         
         <!-- Storage Info -->
