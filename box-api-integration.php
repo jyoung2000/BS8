@@ -683,13 +683,9 @@ class Box_API_Integration {
             update_option('box_redirect_uri', admin_url('admin.php?page=box-api-integration&box_oauth_callback=1'));
         }
 
-        // Initialize rewrite rules
-        Box_Document_Viewer::add_rewrite_rules();
+        // Register custom post type and flush rewrite rules
+        Box_Document_Viewer::register_post_type();
         flush_rewrite_rules();
-
-        // Set rewrite version for automatic flushing
-        update_option('box_document_rewrite_version', '2.0');
-        update_option('box_document_needs_flush', false);
 
         // Clear cache
         wp_cache_flush();

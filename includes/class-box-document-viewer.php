@@ -14,25 +14,17 @@ class Box_Document_Viewer {
      * Initialize
      */
     public static function init() {
-        add_action('init', array(__CLASS__, 'add_rewrite_rules'));
-        add_filter('query_vars', array(__CLASS__, 'add_query_vars'));
-        add_action('template_redirect', array(__CLASS__, 'handle_document_view'));
+        // Register custom post type
+        add_action('init', array(__CLASS__, 'register_post_type'));
 
-        // Check and flush rewrite rules if needed
-        add_action('init', array(__CLASS__, 'maybe_flush_rewrite_rules'));
+        // Handle single post template
+        add_filter('single_template', array(__CLASS__, 'load_custom_template'));
 
-        // Add admin notice for rewrite rules
-        add_action('admin_notices', array(__CLASS__, 'admin_notice_flush_rewrite_rules'));
+        // Handle the_content filter for our post type
+        add_filter('the_content', array(__CLASS__, 'render_document_content'));
 
-        // Add AJAX handler for flushing rewrite rules
-        add_action('wp_ajax_box_flush_rewrite_rules', array(__CLASS__, 'ajax_flush_rewrite_rules'));
-
-        // Prevent 404 errors on box-document pages
-        add_filter('pre_handle_404', array(__CLASS__, 'prevent_404'), 10, 2);
-        add_action('parse_request', array(__CLASS__, 'parse_box_document_request'));
-        add_filter('body_class', array(__CLASS__, 'remove_404_body_class'));
-        add_filter('wp_title', array(__CLASS__, 'set_document_title'), 10, 2);
-        add_filter('document_title_parts', array(__CLASS__, 'set_document_title_parts'));
+        // Add body class for our post type
+        add_filter('body_class', array(__CLASS__, 'add_body_class'));
 
         // AJAX handler for getting document info
         add_action('wp_ajax_box_get_document_url', array(__CLASS__, 'ajax_get_document_url'));
@@ -51,22 +43,733 @@ class Box_Document_Viewer {
     }
 
     /**
-     * Add rewrite rules for document viewing
+     * Register custom post type for Box documents
      */
-    public static function add_rewrite_rules() {
-        add_rewrite_rule(
-            '^box-document/([^/]+)/?$',
-            'index.php?box_document_id=$matches[1]',
-            'top'
+    public static function register_post_type() {
+        $labels = array(
+            'name' => 'Box Documents',
+            'singular_name' => 'Box Document',
+            'menu_name' => 'Box Documents',
+            'add_new' => 'Add New',
+            'add_new_item' => 'Add New Box Document',
+            'edit_item' => 'Edit Box Document',
+            'new_item' => 'New Box Document',
+            'view_item' => 'View Box Document',
+            'search_items' => 'Search Box Documents',
+            'not_found' => 'No box documents found',
+            'not_found_in_trash' => 'No box documents found in trash'
         );
+
+        $args = array(
+            'labels' => $labels,
+            'public' => true,
+            'publicly_queryable' => true,
+            'show_ui' => false, // Hide from admin menu
+            'show_in_menu' => false,
+            'show_in_nav_menus' => false,
+            'show_in_admin_bar' => false,
+            'query_var' => true,
+            'rewrite' => array('slug' => 'box-document', 'with_front' => false),
+            'capability_type' => 'post',
+            'has_archive' => false,
+            'hierarchical' => false,
+            'menu_position' => null,
+            'supports' => array('title'),
+            'exclude_from_search' => false
+        );
+
+        register_post_type('box_document', $args);
     }
 
     /**
-     * Add custom query vars
+     * Get or create a post for a Box file
+     *
+     * @param string $file_id Box file ID
+     * @param string $file_name File name (optional)
+     * @return int|false Post ID or false on failure
      */
-    public static function add_query_vars($vars) {
-        $vars[] = 'box_document_id';
-        return $vars;
+    public static function get_or_create_post($file_id, $file_name = null) {
+        // Check if post already exists
+        $existing_posts = get_posts(array(
+            'post_type' => 'box_document',
+            'meta_key' => 'box_file_id',
+            'meta_value' => $file_id,
+            'posts_per_page' => 1,
+            'post_status' => 'any'
+        ));
+
+        if (!empty($existing_posts)) {
+            $post = $existing_posts[0];
+
+            // Update title if provided and different
+            if ($file_name && $post->post_title !== $file_name) {
+                wp_update_post(array(
+                    'ID' => $post->ID,
+                    'post_title' => $file_name,
+                    'post_name' => sanitize_title($file_name) . '-' . $file_id
+                ));
+            }
+
+            return $post->ID;
+        }
+
+        // Create new post
+        $post_title = $file_name ? $file_name : 'Box Document ' . $file_id;
+        $post_name = sanitize_title($file_name ? $file_name : 'document') . '-' . $file_id;
+
+        $post_id = wp_insert_post(array(
+            'post_title' => $post_title,
+            'post_name' => $post_name,
+            'post_type' => 'box_document',
+            'post_status' => 'publish',
+            'post_content' => ''
+        ));
+
+        if ($post_id) {
+            // Store Box file ID in post meta
+            update_post_meta($post_id, 'box_file_id', $file_id);
+            return $post_id;
+        }
+
+        return false;
+    }
+
+    /**
+     * Get Box file ID from post
+     *
+     * @param int|WP_Post $post Post ID or post object
+     * @return string|false Box file ID or false
+     */
+    public static function get_file_id_from_post($post = null) {
+        if (!$post) {
+            global $post;
+        }
+
+        if (is_numeric($post)) {
+            $post = get_post($post);
+        }
+
+        if (!$post || $post->post_type !== 'box_document') {
+            return false;
+        }
+
+        return get_post_meta($post->ID, 'box_file_id', true);
+    }
+
+    /**
+     * Load custom template for box_document post type
+     */
+    public static function load_custom_template($template) {
+        global $post;
+
+        if ($post && $post->post_type === 'box_document') {
+            // Return path to our custom template
+            $custom_template = dirname(__FILE__) . '/template-box-document.php';
+
+            if (file_exists($custom_template)) {
+                return $custom_template;
+            }
+        }
+
+        return $template;
+    }
+
+    /**
+     * Add body class for box_document post type
+     */
+    public static function add_body_class($classes) {
+        if (is_singular('box_document')) {
+            $classes[] = 'box-document-page';
+            $classes[] = 'single-box_document';
+        }
+
+        return $classes;
+    }
+
+    /**
+     * Render document content
+     */
+    public static function render_document_content($content) {
+        if (!is_singular('box_document')) {
+            return $content;
+        }
+
+        global $post;
+
+        $file_id = self::get_file_id_from_post($post);
+
+        if (!$file_id) {
+            return '<p>Error: Box file ID not found.</p>';
+        }
+
+        // Get file info and render the document viewer
+        ob_start();
+        self::render_document_viewer($file_id, $post->post_title);
+        return ob_get_clean();
+    }
+
+    /**
+     * Render the document viewer
+     */
+    private static function render_document_viewer($file_id, $file_name) {
+        // Initialize default values
+        $file_info = array(
+            'id' => $file_id,
+            'name' => $file_name,
+            'size' => 0,
+            'modified_at' => current_time('mysql')
+        );
+        $embed_url = null;
+        $error_message = null;
+
+        // Check authentication
+        $auth_status = Box_Auth::get_auth_status();
+        if (!$auth_status['authenticated'] || $auth_status['expired']) {
+            $error_message = __('Not authenticated with Box. Please contact the site administrator to reconnect.', 'box-api-integration');
+        } else {
+            // Get file info from Box
+            try {
+                $credentials = Box_API_Integration::get_instance()->get_credentials();
+                $client = new Box_API_Client($credentials);
+
+                $api_file_info = $client->get_file_info($file_id);
+
+                if (is_wp_error($api_file_info)) {
+                    $error_message = __('Unable to load file information. ', 'box-api-integration') . $api_file_info->get_error_message();
+                    error_log('Box Document Viewer - File info error: ' . $api_file_info->get_error_message());
+                } else {
+                    // Successfully got file info
+                    $file_info = $api_file_info;
+
+                    // Try to get embed/preview URL
+                    $embed_url = self::get_embed_url($file_id);
+
+                    if (!$embed_url) {
+                        error_log('Box Document Viewer - Unable to get embed URL for file: ' . $file_id);
+                    }
+                }
+            } catch (Exception $e) {
+                $error_message = __('An error occurred while loading the document. ', 'box-api-integration') . $e->getMessage();
+                error_log('Box Document Viewer - Exception: ' . $e->getMessage());
+            }
+        }
+
+        // Render the document page content
+        self::render_document_page_content($file_info, $embed_url, $error_message);
+    }
+
+    /**
+     * Render just the document page content (without full HTML structure)
+     * This is used by the post-based system
+     */
+    private static function render_document_page_content($file_info, $embed_url, $error_message = null) {
+        $file_name = isset($file_info['name']) ? $file_info['name'] : 'Document';
+        $file_size = isset($file_info['size']) ? size_format($file_info['size'], 2) : '';
+        $modified_at = isset($file_info['modified_at']) ? date('F j, Y g:i a', strtotime($file_info['modified_at'])) : '';
+
+        // Get download URL - always generate a working download URL
+        $download_url = '';
+        if (isset($file_info['id'])) {
+            try {
+                $credentials = Box_API_Integration::get_instance()->get_credentials();
+                $client = new Box_API_Client($credentials);
+
+                // Try to get shared link first (best for direct downloads)
+                $shared_link = $client->create_shared_link($file_info['id']);
+
+                if (!is_wp_error($shared_link) && isset($shared_link['shared_link']['download_url'])) {
+                    // Use shared link download URL
+                    $download_url = $shared_link['shared_link']['download_url'];
+                } elseif (!is_wp_error($shared_link) && isset($shared_link['shared_link']['url'])) {
+                    // Use shared link URL with download parameter
+                    $download_url = $shared_link['shared_link']['url'] . '?dl=1';
+                } else {
+                    // Fallback: use WordPress proxy endpoint for authenticated download
+                    $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
+                }
+            } catch (Exception $e) {
+                error_log('Download URL generation error: ' . $e->getMessage());
+                // Fallback to proxy endpoint
+                $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
+            }
+        }
+
+        // Always ensure download URL is set
+        if (empty($download_url) && isset($file_info['id'])) {
+            // Ultimate fallback: WordPress proxy endpoint
+            $download_url = admin_url('admin-ajax.php') . '?action=box_download_file&file_id=' . urlencode($file_info['id']) . '&nonce=' . wp_create_nonce('box_download_' . $file_info['id']);
+        }
+
+        // Get custom colors and settings (Box blue: #0061D5)
+        $chat_ai_enabled = get_option('box_chat_ai_enabled', true);
+        $ai_button_color = get_option('box_chat_ai_button_color', '#0061D5');
+        $header_color = get_option('box_chat_header_color', '#0061D5');
+        $submit_color = get_option('box_chat_submit_color', '#0061D5');
+
+        // Helper function to generate lighter/darker shades
+        $darken_color = function($hex, $percent) {
+            $hex = str_replace('#', '', $hex);
+            $r = hexdec(substr($hex, 0, 2));
+            $g = hexdec(substr($hex, 2, 2));
+            $b = hexdec(substr($hex, 4, 2));
+            $r = max(0, min(255, $r - ($r * $percent / 100)));
+            $g = max(0, min(255, $g - ($g * $percent / 100)));
+            $b = max(0, min(255, $b - ($b * $percent / 100)));
+            return '#' . sprintf('%02x%02x%02x', $r, $g, $b);
+        };
+
+        $ai_button_hover = $darken_color($ai_button_color, -10);
+        $header_dark = $darken_color($header_color, 10);
+        $submit_hover = $darken_color($submit_color, -10);
+
+        // Output inline styles
+        ?>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            html {
+                /* Prevent iOS text size adjustment */
+                -webkit-text-size-adjust: 100%;
+                -moz-text-size-adjust: 100%;
+                -ms-text-size-adjust: 100%;
+                text-size-adjust: 100%;
+                /* Prevent double-tap zoom */
+                touch-action: manipulation;
+            }
+
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+                /* Prevent text size adjustment */
+                -webkit-text-size-adjust: 100%;
+                /* Prevent double-tap zoom */
+                touch-action: manipulation;
+            }
+
+            .box-document-viewer-wrapper {
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                background: #f5f5f7;
+            }
+
+            .document-viewer-header {
+                position: sticky;
+                top: 0;
+                background: #fff;
+                border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+                padding: 18px 28px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+                z-index: 999;
+            }
+
+            .document-info {
+                flex: 1;
+                min-width: 0;
+                margin-right: 24px;
+            }
+
+            .document-name {
+                font-size: 19px;
+                font-weight: 600;
+                color: #1d1d1f;
+                margin-bottom: 6px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                letter-spacing: -0.02em;
+            }
+
+            .document-meta {
+                font-size: 14px;
+                color: #86868b;
+                font-weight: 400;
+            }
+
+            .document-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .document-actions-right {
+                display: flex;
+                gap: 10px;
+            }
+
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 20px;
+                font-size: 15px;
+                font-weight: 500;
+                border-radius: 10px;
+                border: none;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                text-decoration: none;
+                min-width: 48px;
+                min-height: 48px;
+                justify-content: center;
+                white-space: nowrap;
+            }
+
+            .btn-primary {
+                background: linear-gradient(135deg, <?php echo $ai_button_color; ?> 0%, <?php echo $ai_button_hover; ?> 100%);
+                color: white;
+                box-shadow: 0 4px 12px rgba(0, 97, 213, 0.3);
+            }
+
+            .btn-primary:hover {
+                background: linear-gradient(135deg, <?php echo $ai_button_hover; ?> 0%, <?php echo $ai_button_color; ?> 100%);
+                box-shadow: 0 6px 16px rgba(0, 97, 213, 0.4);
+                transform: translateY(-1px);
+            }
+
+            .btn-primary:active {
+                transform: translateY(0);
+                box-shadow: 0 2px 8px rgba(0, 97, 213, 0.3);
+            }
+
+            .btn-secondary {
+                background: #f5f5f7;
+                color: #1d1d1f;
+                border: 1px solid rgba(0, 0, 0, 0.12);
+            }
+
+            .btn-secondary:hover {
+                background: #e8e8ed;
+                border-color: rgba(0, 0, 0, 0.18);
+            }
+
+            .btn .dashicons {
+                font-size: 20px;
+                width: 20px;
+                height: 20px;
+            }
+
+            .document-viewer-container {
+                flex: 1;
+                display: flex;
+                padding: 24px;
+            }
+
+            .document-viewer-container iframe {
+                flex: 1;
+                border: none;
+                border-radius: 12px;
+                box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+                background: white;
+            }
+
+            .document-viewer-error {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                padding: 48px 24px;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+            }
+
+            @media (max-width: 768px) {
+                .document-viewer-header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 16px;
+                    padding: 16px 20px;
+                }
+
+                .document-info {
+                    margin-right: 0;
+                    width: 100%;
+                }
+
+                .document-actions {
+                    width: 100%;
+                    justify-content: space-between;
+                }
+
+                .btn {
+                    font-size: 14px;
+                    padding: 8px 16px;
+                }
+
+                .document-viewer-container {
+                    padding: 16px;
+                }
+            }
+
+            @media (max-width: 480px) {
+                .btn-download .btn-text {
+                    display: none;
+                }
+
+                .btn-download {
+                    padding: 12px;
+                    min-width: unset;
+                    width: 48px;
+                    height: 48px;
+                }
+
+                .document-actions-right {
+                    display: flex;
+                    flex-wrap: nowrap;
+                    gap: 8px;
+                }
+            }
+
+            /* Box AI Chat Modal Styles - Inline for now */
+            .box-ai-chat-modal {
+                display: none;
+                position: fixed;
+                inset: 0;
+                z-index: 999999;
+            }
+
+            .box-ai-chat-overlay {
+                position: absolute;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.4);
+                backdrop-filter: blur(4px);
+            }
+
+            .box-ai-chat-container {
+                position: absolute;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: min(450px, 100vw);
+                background: white;
+                display: flex;
+                flex-direction: column;
+                box-shadow: -4px 0 24px rgba(0, 0, 0, 0.2);
+            }
+
+            .box-ai-chat-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 20px 24px;
+                background: <?php echo $header_color; ?>;
+                color: white;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            }
+
+            .box-ai-chat-title {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 18px;
+                font-weight: 600;
+            }
+
+            .box-ai-chat-close-btn {
+                background: rgba(255, 255, 255, 0.15);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                color: white;
+                padding: 8px;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            }
+
+            .box-ai-chat-close-btn:hover {
+                background: rgba(255, 255, 255, 0.25);
+            }
+
+            .box-ai-chat-messages {
+                flex: 1;
+                overflow-y: auto;
+                padding: 20px;
+                background: #f9f9f9;
+            }
+
+            .box-ai-message {
+                margin-bottom: 16px;
+            }
+
+            .box-ai-message-user {
+                text-align: right;
+            }
+
+            .box-ai-message-content {
+                display: inline-block;
+                padding: 12px 16px;
+                border-radius: 16px;
+                max-width: 80%;
+                word-wrap: break-word;
+            }
+
+            .box-ai-message-user .box-ai-message-content {
+                background: <?php echo $submit_color; ?>;
+                color: white;
+            }
+
+            .box-ai-message-ai .box-ai-message-content {
+                background: white;
+                color: #1d1d1f;
+                border: 1px solid #e5e5e5;
+            }
+
+            .box-ai-chat-input-container {
+                padding: 16px;
+                background: white;
+                border-top: 1px solid #e5e5e5;
+            }
+
+            .box-ai-chat-input-wrapper {
+                display: flex;
+                gap: 8px;
+            }
+
+            #box-ai-chat-input {
+                flex: 1;
+                padding: 12px;
+                border: 1px solid #e5e5e5;
+                border-radius: 8px;
+                resize: none;
+                font-family: inherit;
+            }
+
+            .box-ai-chat-send-btn {
+                background: <?php echo $submit_color; ?>;
+                color: white;
+                border: none;
+                padding: 12px 16px;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            }
+
+            .box-ai-chat-send-btn:hover {
+                background: <?php echo $submit_hover; ?>;
+            }
+
+            .box-ai-welcome-message {
+                text-align: center;
+                padding: 32px 16px;
+                color: #86868b;
+            }
+
+            @media (max-width: 768px) {
+                .box-ai-chat-container {
+                    width: 100vw;
+                }
+            }
+        </style>
+
+        <div class="box-document-viewer-wrapper">
+            <div class="document-viewer-header">
+                <div class="document-info">
+                    <div class="document-name"><?php echo esc_html($file_name); ?></div>
+                    <div class="document-meta">
+                        <?php if ($file_size) : ?>
+                            <?php echo esc_html($file_size); ?>
+                        <?php endif; ?>
+                        <?php if ($modified_at) : ?>
+                            <?php echo $file_size ? ' · ' : ''; ?>Modified <?php echo esc_html($modified_at); ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <div class="document-actions">
+                    <?php if ($chat_ai_enabled) : ?>
+                        <button id="box-ai-chat-button" class="btn btn-primary" data-file-id="<?php echo esc_attr($file_info['id']); ?>">
+                            <span class="dashicons dashicons-format-chat"></span>
+                            <span>Chat with AI</span>
+                        </button>
+                    <?php endif; ?>
+                    <div class="document-actions-right">
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary btn-download" download title="Download file">
+                            <span class="dashicons dashicons-download"></span>
+                            <span class="btn-text">Download</span>
+                        </a>
+                        <button onclick="window.history.back();" class="btn btn-secondary">
+                            <span class="dashicons dashicons-arrow-left-alt2"></span>
+                            <span>Back</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="document-viewer-container">
+                <?php if ($error_message) : ?>
+                    <div class="document-viewer-error">
+                        <span class="dashicons dashicons-warning" style="font-size: 48px; width: 48px; height: 48px; color: #d63638;"></span>
+                        <p style="margin-top: 20px; font-size: 18px; font-weight: 600;"><?php echo esc_html($error_message); ?></p>
+                        <p style="color: #86868b;">You can still download the file using the button above.</p>
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download style="margin-top: 20px;">
+                            <span class="dashicons dashicons-download"></span>
+                            Download File
+                        </a>
+                    </div>
+                <?php elseif ($embed_url) : ?>
+                    <iframe src="<?php echo esc_url($embed_url); ?>" allowfullscreen></iframe>
+                <?php else : ?>
+                    <div class="document-viewer-error">
+                        <span class="dashicons dashicons-info" style="font-size: 48px; width: 48px; height: 48px; color: #2271b1;"></span>
+                        <p style="margin-top: 20px;">Unable to preview this document.</p>
+                        <p style="color: #86868b;">The preview may not be available for this file type.</p>
+                        <a href="<?php echo esc_url($download_url); ?>" class="btn btn-primary" download style="margin-top: 20px;">
+                            <span class="dashicons dashicons-download"></span>
+                            Download File
+                        </a>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Box AI Chat Modal -->
+            <?php if ($chat_ai_enabled) : ?>
+            <div id="box-ai-chat-modal" class="box-ai-chat-modal">
+                <div class="box-ai-chat-overlay"></div>
+                <div class="box-ai-chat-container">
+                    <div class="box-ai-chat-header">
+                        <div class="box-ai-chat-title">
+                            <span class="dashicons dashicons-format-chat"></span>
+                            <span>Chat with Box AI</span>
+                        </div>
+                        <button id="box-ai-chat-close" class="box-ai-chat-close-btn">
+                            <span class="dashicons dashicons-no-alt"></span>
+                        </button>
+                    </div>
+                    <div class="box-ai-chat-messages" id="box-ai-chat-messages">
+                        <div class="box-ai-welcome-message">
+                            <p>Hi! I'm Box AI. I can help you understand this document. Ask me anything!</p>
+                        </div>
+                    </div>
+                    <div class="box-ai-chat-input-container">
+                        <div class="box-ai-chat-input-wrapper">
+                            <textarea id="box-ai-chat-input" placeholder="Ask a question about this document..." rows="1"></textarea>
+                            <button id="box-ai-chat-send" class="box-ai-chat-send-btn">
+                                <span class="dashicons dashicons-arrow-up-alt2"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
+
+        <script>
+        console.log('Box Document Viewer loaded');
+        console.log('boxAiChat object:', typeof boxAiChat !== 'undefined' ? boxAiChat : 'NOT FOUND');
+        console.log('Chat button exists:', document.getElementById('box-ai-chat-button') !== null);
+        console.log('File ID on button:', document.getElementById('box-ai-chat-button') ? document.getElementById('box-ai-chat-button').getAttribute('data-file-id') : 'NO BUTTON');
+        console.log('Download URL generated:', <?php echo json_encode(!empty($download_url)); ?>);
+        console.log('Download button exists:', document.querySelector('.btn-download') !== null);
+        </script>
+        <?php
     }
 
     /**
@@ -429,8 +1132,6 @@ class Box_Document_Viewer {
             $header_dark = $darken_color($header_color, 10);
             $submit_hover = $darken_color($submit_color, -10);
             ?>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-            <title><?php echo esc_html($file_name); ?> - <?php bloginfo('name'); ?></title>
             <style>
                 * {
                     margin: 0;
@@ -1688,9 +2389,17 @@ class Box_Document_Viewer {
             <?php
         }, 999);
 
-        // Start WordPress page
-        get_header();
+        // Output complete HTML document (bypassing theme to avoid 404 content)
         ?>
+        <!DOCTYPE html>
+        <html <?php language_attributes(); ?>>
+        <head>
+            <meta charset="<?php bloginfo('charset'); ?>">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+            <title><?php echo esc_html($file_name); ?> - <?php bloginfo('name'); ?></title>
+            <?php wp_head(); ?>
+        </head>
+        <body <?php body_class('box-document-page'); ?>>
 
         <div class="box-document-viewer-wrapper">
             <div class="document-viewer-header">
@@ -1806,8 +2515,10 @@ class Box_Document_Viewer {
         console.log('Download button exists:', document.querySelector('.btn-icon') !== null);
         </script>
 
+        <?php wp_footer(); ?>
+        </body>
+        </html>
         <?php
-        get_footer();
     }
 
     /**
@@ -1842,13 +2553,16 @@ class Box_Document_Viewer {
      * @return string Document URL
      */
     public static function get_document_url($file_id, $file_name = null) {
-        if ($file_name) {
-            $slug = self::generate_slug($file_name);
-            return home_url('/box-document/' . $slug . '-' . $file_id . '/');
+        // Get or create the post for this file
+        $post_id = self::get_or_create_post($file_id, $file_name);
+
+        if ($post_id) {
+            return get_permalink($post_id);
         }
 
-        // Fallback to numeric URL if no filename provided
-        return home_url('/box-document/' . $file_id . '/');
+        // Fallback: construct URL manually if post creation failed
+        $slug = $file_name ? sanitize_title($file_name) . '-' . $file_id : $file_id;
+        return home_url('/box-document/' . $slug . '/');
     }
 
     /**
@@ -1871,10 +2585,8 @@ class Box_Document_Viewer {
      * Enqueue chat scripts
      */
     public static function enqueue_chat_scripts() {
-        // Only enqueue on document viewer pages
-        $file_id = get_query_var('box_document_id');
-
-        if ($file_id) {
+        // Only enqueue on box_document post type pages
+        if (is_singular('box_document')) {
             // Enqueue dashicons for chat icon
             wp_enqueue_style('dashicons');
 
