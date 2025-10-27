@@ -952,6 +952,8 @@ class Box_Document_Viewer {
                     .document-actions-right {
                         flex: 1;
                         gap: 8px;
+                        display: flex;
+                        flex-wrap: nowrap;
                     }
 
                     .btn {
@@ -972,6 +974,19 @@ class Box_Document_Viewer {
                         width: 44px;
                         height: 44px;
                         padding: 10px;
+                    }
+
+                    /* Make download button icon-only on tablets for better fit */
+                    .btn-download .btn-text {
+                        display: none;
+                    }
+
+                    .btn-download {
+                        flex: 0 0 auto;
+                        padding: 12px;
+                        min-width: 44px;
+                        width: 44px;
+                        height: 44px;
                     }
 
                     .document-viewer-container iframe {
@@ -1092,6 +1107,25 @@ class Box_Document_Viewer {
                     .btn {
                         font-size: 14px;
                         padding: 10px 16px;
+                    }
+
+                    /* Make download button icon-only on mobile */
+                    .btn-download .btn-text {
+                        display: none;
+                    }
+
+                    .btn-download {
+                        padding: 12px;
+                        min-width: unset;
+                        width: 48px;
+                        height: 48px;
+                    }
+
+                    /* Ensure download and back buttons stay on same line */
+                    .document-actions-right {
+                        display: flex;
+                        flex-wrap: nowrap;
+                        gap: 8px;
                     }
 
                     /* Fullscreen immersive chat with modern design */
@@ -1423,11 +1457,10 @@ class Box_Document_Viewer {
                         <span>Chat with AI</span>
                     </button>
                     <div class="document-actions-right">
-                        <?php if ($download_url) : ?>
-                            <a href="<?php echo esc_url($download_url); ?>" class="btn btn-icon" download title="Download file">
-                                <span class="dashicons dashicons-download"></span>
-                            </a>
-                        <?php endif; ?>
+                        <a href="<?php echo $download_url ? esc_url($download_url) : '#'; ?>" class="btn btn-primary btn-download" download title="Download file" <?php echo !$download_url ? 'onclick="return false;" style="opacity: 0.6; cursor: not-allowed;"' : ''; ?>>
+                            <span class="dashicons dashicons-download"></span>
+                            <span class="btn-text">Download</span>
+                        </a>
                         <button onclick="navigateBack();" class="btn btn-secondary">
                             <span class="dashicons dashicons-arrow-left-alt2"></span>
                             <span>Back</span>
