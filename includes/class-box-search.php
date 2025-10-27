@@ -236,7 +236,7 @@ class Box_Search {
                     'type' => $file['type'],
                     'extension' => pathinfo($file['name'], PATHINFO_EXTENSION),
                     'parent' => isset($file['parent']) ? $file['parent']['name'] : 'Unknown',
-                    'url' => Box_Document_Viewer::get_document_url($file['id']) // Use proper permalink
+                    'url' => Box_Document_Viewer::get_document_url($file['id'], $file['name']) // Use proper permalink with filename slug
                 );
             }
         }

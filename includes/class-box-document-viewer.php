@@ -74,7 +74,7 @@ class Box_Document_Viewer {
      */
     public static function maybe_flush_rewrite_rules() {
         $version_option = 'box_document_rewrite_version';
-        $current_version = '1.0';
+        $current_version = '2.0'; // Updated for slug-based permalink structure
         $saved_version = get_option($version_option, '');
 
         // If version doesn't match or doesn't exist, flush rules
@@ -82,7 +82,7 @@ class Box_Document_Viewer {
             flush_rewrite_rules();
             update_option($version_option, $current_version);
             update_option('box_document_needs_flush', false);
-            error_log('Box Document Viewer: Rewrite rules flushed automatically');
+            error_log('Box Document Viewer: Rewrite rules flushed automatically for version ' . $current_version);
         }
     }
 
@@ -228,14 +228,36 @@ class Box_Document_Viewer {
     }
 
     /**
+     * Extract file ID from URL slug
+     * Handles both old numeric format (123456) and new slug format (filename-123456)
+     */
+    private static function extract_file_id($slug) {
+        // If slug contains hyphens, extract everything after the last hyphen
+        $last_hyphen = strrpos($slug, '-');
+        if ($last_hyphen !== false) {
+            $potential_id = substr($slug, $last_hyphen + 1);
+            // Verify it looks like a Box file ID (numeric)
+            if (is_numeric($potential_id)) {
+                return $potential_id;
+            }
+        }
+
+        // Fallback: return as-is (for old numeric URLs)
+        return $slug;
+    }
+
+    /**
      * Handle document view requests
      */
     public static function handle_document_view() {
-        $file_id = get_query_var('box_document_id');
+        $slug = get_query_var('box_document_id');
 
-        if (!$file_id) {
+        if (!$slug) {
             return;
         }
+
+        // Extract the actual file ID from the slug
+        $file_id = self::extract_file_id($slug);
 
         // Ensure this is not treated as a 404
         global $wp_query;
@@ -1791,7 +1813,41 @@ class Box_Document_Viewer {
     /**
      * Get public URL for a document
      */
-    public static function get_document_url($file_id) {
+    /**
+     * Generate a slug from a filename
+     */
+    private static function generate_slug($filename) {
+        // Remove file extension
+        $name = pathinfo($filename, PATHINFO_FILENAME);
+
+        // Convert to lowercase and replace spaces/special chars with hyphens
+        $slug = strtolower($name);
+        $slug = preg_replace('/[^a-z0-9]+/', '-', $slug);
+        $slug = trim($slug, '-');
+
+        // Limit length to 50 characters
+        if (strlen($slug) > 50) {
+            $slug = substr($slug, 0, 50);
+            $slug = trim($slug, '-');
+        }
+
+        return $slug;
+    }
+
+    /**
+     * Get document URL
+     *
+     * @param string $file_id Box file ID
+     * @param string $file_name Optional file name for creating readable slug
+     * @return string Document URL
+     */
+    public static function get_document_url($file_id, $file_name = null) {
+        if ($file_name) {
+            $slug = self::generate_slug($file_name);
+            return home_url('/box-document/' . $slug . '-' . $file_id . '/');
+        }
+
+        // Fallback to numeric URL if no filename provided
         return home_url('/box-document/' . $file_id . '/');
     }
 

@@ -688,7 +688,7 @@ class Box_API_Integration {
         flush_rewrite_rules();
 
         // Set rewrite version for automatic flushing
-        update_option('box_document_rewrite_version', '1.0');
+        update_option('box_document_rewrite_version', '2.0');
         update_option('box_document_needs_flush', false);
 
         // Clear cache
